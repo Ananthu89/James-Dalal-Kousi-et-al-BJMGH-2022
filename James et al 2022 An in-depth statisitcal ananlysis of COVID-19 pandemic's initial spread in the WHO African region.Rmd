@@ -1,0 +1,554 @@
+---
+title: "Analyses for James et al. 2022: An in-depth statistical analysis of the COVID- 19 pandemic's initial spread in the WHO African region"
+date: "06/01/2022"
+author: 'Ananthu James, Jyoti Dalal, Jessie Abbate'
+output: 
+  html_document: 
+  #fig_height: 10
+  #fig_width: 12.5
+  editor_options: 
+  chunk_output_type: console
+---
+  
+```{r, include=FALSE}
+rm(list = ls()) 
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE)
+```
+
+```{r, include=FALSE}
+require(pacman)
+library(pacman)
+p_load(char = c("devtools", "jtools", "ggstance", "grid", "gridExtra", 
+                "corrplot", # for correlation plots
+                "FactoMineR", "factoextra", # for PCA analysis
+                "kableExtra", # for nice html tables
+                "GGally", "RColorBrewer", 
+                "glmulti","linelist", "MASS",
+                "tidyverse", 'readr')) # for everything
+devtools::install_github("raivokolde/pheatmap") #for adaptable heatmaps, developer version
+library(pheatmap)
+```
+
+
+```{r}
+
+df <- read.csv("./46country_whoafro_datafile.csv", 
+               header = TRUE, sep = ",", dec = ".") 
+
+df = df[-(which(df$country=="United Republic of Tanzania")), ]  # removing due to poor data quality
+
+df$max_weekly_attackrate <- df$max_weekly_cases/(df$pop_thous/1000)
+df$max_monthly_attackrate <- df$max_monthly_cases/(df$pop_thous/1000)
+
+df$CFR<-df$deaths/df$cases
+
+df$days_to_50cases<-as.numeric((as.Date(df$day_50th_case)-as.Date(df$day_first_case)))
+
+```
+
+
+# 1. Descriptive Statistics on Epidemic Indicators
+
+
+```{r}
+# recode long country names
+df$country
+df$country[df$country=="Democratic Republic of the Congo"]<-"DRC"
+df$country[df$country=="Central African Republic"]<-"CAR"
+df$country[df$country=="Congo (Republic of)"]<-"Congo"
+df$country[df$country=="Sao Tome and Principe"]<-"STP"
+df$country[df$country=="Equatorial Guinea"]<-"Eq Guinea"
+
+dfhm<-as.matrix(df[,c("cases_per_million", "max_monthly_attackrate", "CFR", "start_delay", "days_to_50cases")])
+
+row.names(dfhm)<-c(df$country)
+colnames(dfhm)<-c("Cumulative Attack Rate", "Maximum Attack Rate","CFR","Start Delay","Growth Period")
+
+pheatmap(t(dfhm),scale="row", cluster_rows=FALSE, cluster_cols=FALSE,legend=TRUE,fontsize=7,cellwidth = 8,cellheight = 8, color = colorRampPalette(c("blue", "white", "red"))(30))
+
+```
+
+
+- Countries for which values for variables 'Stringency_Mean_Min', 'Stringency_Max_Mean' are missing:
+
+```{r}
+#df<-droplevels(df[which(df$deaths>=10),]) # Removing countries with less than 10 deaths
+
+df$country[which(is.na(df$Stringency_Mean_Min))]
+df$country[which(is.na(df$Stringency_Max_Mean))]
+
+```
+
+
+- Countries for which values for variables 'tourism_arrivals' and 'tourism_arrivals_standardized' values are missing
+
+```{r}
+df$country[which(is.na(df$Tourism_Arrivals))]
+
+```
+
+-Countries with fewer than 10 deaths recorded
+
+```{r}
+df$country[which(df$deaths<10)]
+```
+
+# 2. Exploratory Analysis (46 countries)
+ 
+## Explanatory variables  
+
+```{r}
+df1 <- as.data.frame(df$country)
+
+df1$Tourism_arrivals_percap = df$Tourism_Arrivals_standardised_by_population
+df1$Tourism_dollars_percap = df$Tourism_receipts_standardised_by_population
+df1$Stringency_day1 = df$Strigency_Index_First_case_day
+df1$Stringency_mean = df$Stringency_Mean_Min
+df1$neighbors_attack_rate = df$cases_per_million_population_in_neighbors
+df1$GDP_percap = df$GDP_per_capita
+df1$Fishing_volume_percap = df$Capture_fisheries_standardised_by_population
+df1$Preparedness = df$Prepardness_Index_Total_Average
+df1$Latitude = df$latitude
+df1$Urbanization = as.numeric(df$Urban_population_percentage)
+df1$Children_proportion = df$population_age_between_0_14_years_percentage
+df1$Male_proportion = df$male_pop_frac
+df1$Pop_density = as.numeric(df$Pop_Density_per_sq_km) 
+
+dfhm_explan<-as.matrix(df1[,2:dim(df1)[2]]) 
+row.names(dfhm_explan)<-c(df1$country)
+colnames(dfhm_explan)<-c("Tourism Arrivals","Tourism Revenue","Initial Stringency","Mean Stringency","Neighbor Attack Rate", "Per capita GDP","Per capita Fishing","Preparedness","Latitude","Urbanization","Proportion Under 15","Proportion Male","Population Density")
+
+pheatmap(t(dfhm_explan),scale="row", cluster_rows=FALSE, cluster_cols=FALSE,legend=TRUE,fontsize=7,cellwidth = 8,cellheight = 8, color = colorRampPalette(c("blue", "white", "red"))(30),na_col="grey")
+```
+
+## Format data for analysis
+
+```{r}
+
+dfclip = df1 %>% 
+ mutate(across(where(is.integer), as.numeric)) 
+
+names(dfclip)[which(purrr::map_df(dfclip, class)!="numeric")]     
+dfclip[,which(purrr::map_df(dfclip, class)=="numeric")]
+
+dfclip<-dfclip[,which(purrr::map_df(dfclip, class)=="numeric")]
+which(is.na(dfclip))
+
+```
+
+## Data Imputation
+
+```{r, include=TRUE}
+
+df2<-as.data.frame(dfclip)
+
+# impute Tourism_arrivals_percap
+hist(log10(dfclip$Tourism_arrivals_percap))
+df2[which(is.na(dfclip$Tourism_arrivals_percap)),"Tourism_arrivals_percap"]<- median(dfclip$Tourism_arrivals_percap,na.rm=TRUE)
+
+# impute Tourism_dollars_percap
+hist(log10(dfclip$Tourism_dollars_percap))
+df2[which(is.na(dfclip$Tourism_dollars_percap)),"Tourism_dollars_percap"]<- median(dfclip$Tourism_dollars_percap,na.rm=TRUE)
+
+# impute Stringency_day1
+hist(sqrt(dfclip$Stringency_day1))
+df2[which(is.na(dfclip$Stringency_day1)),"Stringency_day1"]<-(median(sqrt(dfclip$Stringency_day1),na.rm=TRUE))^2 # I don't expect this to be any different from imputing just the median 
+
+# impute Stringency_mean
+hist((dfclip$Stringency_mean))
+df2[which(is.na(dfclip$Stringency_mean)),"Stringency_mean"]<-median(dfclip$Stringency_mean,na.rm=TRUE)
+```
+
+## Transform heavily skewed explanatory variables for (pairwise) correlation  
+
+```{r} 
+
+hist(log10(df2[,"Tourism_arrivals_percap"]))
+hist(log10(df2$Tourism_dollars_percap))
+hist(sqrt(df2$Stringency_day1))
+hist((df2$Stringency_mean))
+hist(log10(df2$neighbors_attack_rate))
+hist(log10(df2$GDP_percap))
+hist(log10(df2$Fishing_volume_percap))
+hist((df2$Preparedness))
+hist((df2$Latitude))
+hist((df2$Urbanization))
+hist((df2$Children_proportion))
+hist((df2$Male_proportion))
+hist(log10(df2$Pop_density))
+
+df2$Tourism_arrivals_percap_tr<-(log10(df2$Tourism_arrivals_percap))
+df2$Tourism_dollars_percap_tr<-(log10(df2$Tourism_dollars_percap))
+df2$Stringency_day1_tr<-(sqrt(df2$Stringency_day1))
+df2$neighbors_attack_rate_tr<-(log10(df2$neighbors_attack_rate+1))  # 1 is added to allow log transformation including the 6 island nations (neighbors = 0). 
+df2$GDP_percap_tr<-(log10(df2$GDP_percap))
+df2$Fishing_volume_percap_tr<-(log10(df2$Fishing_volume_percap))
+df2$Pop_density_tr<-(log10(df2$Pop_density))
+```
+
+## Correlation matrix among explanatory variables
+
+```{r}
+names(df2)
+
+df2_tr<- df2 %>% select(Tourism_arrivals_percap_tr,Tourism_dollars_percap_tr,Stringency_day1_tr,Stringency_mean,neighbors_attack_rate_tr,GDP_percap_tr, Fishing_volume_percap_tr,Preparedness,Latitude,Urbanization,Children_proportion,Male_proportion,Pop_density_tr)
+
+names(df2_tr)<-c("Tourism Arrivals","Tourism Revenue","Initial Stringency","Mean Stringency","Neighbor Attack Rate", "Per capita GDP","Per capita Fishing","Preparedness","Latitude","Urbanization","Proportion Under 15","Proportion Male","Population Density")
+
+corr_matrix <- round(cor(df2_tr, method = "pearson"), digit = 2) 
+
+corrplot.mixed(corr_matrix, order = "hclust", lower.col = "black", tl.pos = "lt", tl.srt = 45, tl.col = "black", tl.cex = 1, number.cex = 0.5)
+
+```
+
+
+## PCA (using the non-transformed variables) 
+
+```{r}
+df2_not_tr<- df2 %>% select(Tourism_arrivals_percap,Tourism_dollars_percap,Stringency_day1,Stringency_mean,neighbors_attack_rate,GDP_percap, Fishing_volume_percap,Preparedness,Latitude,Urbanization,Children_proportion,Male_proportion,Pop_density)
+
+names(df2_not_tr)<-c("Tourism Arrivals","Tourism Revenue","Initial Stringency","Mean Stringency","Neighbor Attack Rate", "Per capita GDP","Per capita Fishing","Preparedness","Latitude","Urbanization","Proportion Under 15","Proportion Male","Population Density")
+
+res_pca <- PCA(df2_not_tr, ncp = 4, scale.unit = TRUE, graph = FALSE)
+eigen_values <- round(res_pca$eig, 4)
+
+knitr::kable(eigen_values, align = "c", 
+             caption = "Eigenvalues and explained variance in each Principal Component") 
+
+fviz_eig(res_pca, ncp = 14, choice = "eigenvalue", addlabels = TRUE, ylim = c(0, 5)) +
+  geom_hline(yintercept = 1, color = "red", lty = 2) +
+  theme_bw()
+
+scree<-fviz_screeplot(res_pca,addlabels=TRUE,ncp=length(df2_not_tr))
+scree<-scree + labs(title = NULL,
+         x = "PCA Dimensions", y = "% variance explained")+geom_hline(yintercept=(100/length(df2_not_tr)),linetype="dashed",col="red",cex=1.25)+
+theme(axis.text=element_text(size=12,face="bold"),
+        axis.title=element_text(size=14,face="bold"))
+scree
+```
+
+-Variable contributions to each PCA Dimension:
+
+```{r}
+tab_contrib <- round(res_pca$var$contrib[,1:4], 3)
+
+kable(tab_contrib, align = "c", 
+      caption = "Contributions of each variable (%)")
+
+tab_load <- round(sweep(res_pca$var$coord, 2, 
+                        sqrt(res_pca$eig[1:ncol(res_pca$var$coord),1]), 
+                        FUN = "/"), 3)[,1:4]
+
+kable(tab_load, align = "c", 
+      caption = "Loadings of each variable")
+
+fviz_contrib(res_pca, choice = "var", axes = 1)
+fviz_contrib(res_pca, choice = "var", axes = 2)
+fviz_contrib(res_pca, choice = "var", axes = 3)
+fviz_contrib(res_pca, choice = "var", axes = 4)
+
+res.desc <- dimdesc(res_pca, axes = c(1,2,3,4)) 
+# Description of dimensions (including p-values)
+res.desc$Dim.1
+res.desc$Dim.2
+res.desc$Dim.3
+res.desc$Dim.4
+
+varx <- get_pca_var(res_pca)
+corrplot(varx$contrib,is.corr=FALSE,cl.cex=0.5)
+corrplot((round(varx$contrib,digits=2)),is.corr=FALSE,cl.cex=0.5, method = "number", sig.level = 0.05, insig = c("blank"), tl.cex = 1.25, number.cex = 0.8,tl.col="black")
+corrplot(varx$coord,is.corr=FALSE,cl.cex=0.5)
+corrplot((round(varx$coord,digits=2)),is.corr=FALSE,cl.cex=0.5, method = "number", sig.level = 0.05, insig = c("blank"), tl.cex = 1.25, tl.col="black", number.cex = 0.8)
+```
+
+### Putting the PC scores and response variables together in a single dataframe for regression and PCA biplot analysis
+
+```{r}
+
+df1$PC1<-res_pca$ind$coord[,1]
+df1$PC2<-res_pca$ind$coord[,2]
+df1$PC3<-res_pca$ind$coord[,3]
+df1$PC4<-res_pca$ind$coord[,4]
+
+names(df1)[1]<-"country"
+df_scores<-left_join(df,df1)
+territory <- as.factor(df_scores$Territory)
+subregion<-as.factor(df_scores$SubRegion)
+
+fviz_pca_biplot(res_pca, axes=c(1,2), invisible=c("var"), habillage = territory, addEllipses = TRUE, label = "var", shape.var = 15) +theme_minimal()
+
+fviz_pca_biplot(res_pca, axes=c(1,2), invisible=c("var"), habillage = subregion, addEllipses = TRUE, label = "var", shape.var = 15) +theme_minimal()
+
+```
+
+# 3. Impact of PCs on Response Variables
+
+## Regression
+
+### CFR
+
+```{r}
+
+mod21<-MASS::glm.nb(deaths~offset(log(cases))+PC1+PC2+PC3+PC4,data=df_scores,init.theta=1.0,link=log)
+summary(mod21)   
+
+p_cfr<-summary(mod21)$coefficients[,"Pr(>|z|)"]
+p_cfr
+
+mod_21<-stepAIC(mod21)      
+summary(mod_21) 
+
+p_best_cfr<-summary(mod_21)$coefficients[,"Pr(>|z|)"]
+p_best_cfr
+
+coef(mod_21)
+confint(mod_21)
+hist(residuals(mod_21))
+h21  <- hist(residuals(mod_21))
+
+p21  <- plot_coefs(mod_21, legend.title = "CFR") 
+
+resmod_21 <- residuals(mod_21, type="deviance") 
+plot(predict(mod_21), resmod_21) 
+plot(log(predict(mod_21)), resmod_21) 
+abline(h=0, lty=2)
+
+res_standardised <- rstandard(mod_21)
+plot(predict(mod_21), res_standardised) 
+plot(log(predict(mod_21)), res_standardised) 
+abline(h=0, lty=2)
+
+resP <- residuals(mod_21, type="pearson") 
+plot(predict(mod_21), resP) 
+plot(log(predict(mod_21)), resP) 
+abline(h=0, lty=2)
+```
+
+
+### Attack Rate 
+
+```{r}
+
+mod22<-MASS::glm.nb(cases~offset(log(pop_thousands/1000))+PC1+PC2+PC3+PC4,data=df_scores,init.theta=1.0,link=log)
+summary(mod22)
+
+p_attackrate<-summary(mod22)$coefficients[,"Pr(>|z|)"]
+p_attackrate
+
+mod_22<-stepAIC(mod22)    
+summary(mod_22)  
+
+p_best_attackrate<-summary(mod_22)$coefficients[,"Pr(>|z|)"]
+p_best_attackrate
+
+coef(mod_22)
+confint(mod_22)
+hist(residuals(mod_22))
+h22  <- hist(residuals(mod_22))
+
+p22  <- plot_coefs(mod_22, legend.title = "Cumulative attack rate")
+
+resmod_22 <- residuals(mod_22, type="deviance") 
+plot(predict(mod_22), resmod_22) 
+plot(log(predict(mod_22)), resmod_22) 
+abline(h=0, lty=2)
+
+res_standardised <- rstandard(mod_22)
+plot(predict(mod_22), res_standardised) 
+plot(log(predict(mod_22)), res_standardised) 
+abline(h=0, lty=2)
+
+resP <- residuals(mod_22, type="pearson") 
+plot(predict(mod_22), resP) 
+plot(log(predict(mod_22)), resP) 
+abline(h=0, lty=2)
+
+```
+
+### Max Monthly Attack Rate 
+
+```{r}
+
+mod23<-MASS::glm.nb(max_monthly_cases~offset(log(pop_thousands/1000))+PC1+PC2+PC3+PC4,data=df_scores,init.theta=1.0,link=log)
+summary(mod23)
+
+p_monthlyattackrate<-summary(mod23)$coefficients[,"Pr(>|z|)"]
+p_monthlyattackrate
+
+mod_23<-stepAIC(mod23)
+summary(mod_23)
+
+p_best_monthlyattackrate<-summary(mod_23)$coefficients[,"Pr(>|z|)"]
+p_best_monthlyattackrate
+
+coef(mod_23)
+confint(mod_23)
+hist(residuals(mod_23))
+h23  <- hist(residuals(mod_23))
+
+p23  <- plot_coefs(mod_23, legend.title = "Max. monthly attack rate")
+
+resmod_23 <- residuals(mod_23, type="deviance") 
+plot(predict(mod_23), resmod_23) 
+plot(log(predict(mod_23)), resmod_23) 
+abline(h=0, lty=2)
+
+res_standardised <- rstandard(mod_23)
+plot(predict(mod_23), res_standardised) 
+plot(log(predict(mod_23)), res_standardised) 
+abline(h=0, lty=2)
+
+resP <- residuals(mod_23, type="pearson") 
+plot(predict(mod_23), resP) 
+plot(log(predict(mod_23)), resP) 
+abline(h=0, lty=2)
+
+```
+
+### Start delay
+
+```{r}
+
+mod1<-MASS::glm.nb(start_delay~PC1+PC2+PC3+PC4,data=df_scores,init.theta=1.0,link=log)
+
+summary(mod1)
+
+p_startdelay<-summary(mod1)$coefficients[,"Pr(>|z|)"]
+p_startdelay
+
+mod34<-stepAIC(mod1)
+summary(mod34)
+
+p_best_startdelay<-summary(mod34)$coefficients[,"Pr(>|z|)"]
+p_best_startdelay
+
+mod34
+coef(mod34)
+confint(mod34)
+hist(residuals(mod34))
+h34  <- hist(residuals(mod34))
+
+p34  <- plot_coefs(mod34, legend.title = "Start delay")
+
+resmod34 <- residuals(mod34, type="deviance") 
+plot(predict(mod34), resmod34) 
+abline(h=0, lty=2)
+
+res_standardised <- rstandard(mod34)
+plot(predict(mod34), res_standardised) 
+abline(h=0, lty=2)
+
+resP <- residuals(mod34, type="pearson") 
+plot(predict(mod34), resP) 
+abline(h=0, lty=2)
+
+```
+
+
+### Initial Growth Period (Days to First 50 Cases)
+
+```{r}
+
+mod1<-MASS::glm.nb(days_to_50cases~PC1+PC2+PC3+PC4,data=df_scores,init.theta=1.0,link=log) # AIC = 402 
+summary(mod1)
+
+p_daystofirst50<-summary(mod1)$coefficients[,"Pr(>|z|)"]
+p_daystofirst50
+
+mod25<-stepAIC(mod1)
+mod25
+summary(mod25)
+
+p_best_daystofirst50<-summary(mod25)$coefficients[,"Pr(>|z|)"]
+p_best_daystofirst50
+
+coef(mod25)
+confint(mod25)
+hist(residuals(mod25))
+h25  <- hist(residuals(mod25))
+
+p25  <- plot_coefs(mod25, legend.title = "Days to First 50 Cases")
+
+resmod25 <- residuals(mod25, type="deviance") 
+plot(predict(mod25), resmod25) 
+plot(log(predict(mod25)), resmod25) 
+abline(h=0, lty=2)
+
+res_standardised <- rstandard(mod25)
+plot(predict(mod25), res_standardised) 
+plot(log(predict(mod25)), res_standardised) 
+abline(h=0, lty=2)
+
+resP <- residuals(mod25, type="pearson") 
+plot(predict(mod25), resP) 
+plot(log(predict(mod25)), resP) 
+abline(h=0, lty=2)
+
+```
+
+### Visual representation of the regression results 
+
+```{r}
+
+grid.arrange(p21, p22, p23, p34, p25, ncol = 3)
+
+lay = rbind(c(1,2,3),
+            c(4,5,NA))
+
+print(grid.arrange(arrangeGrob(p22, top =textGrob("Cumulative Attack Rate", x = unit(0.5, "npc"), 
+                               y = unit(0.7, "npc"))),
+                   arrangeGrob(p23, top=textGrob("Maximum Attack Rate", x = unit(0.5, "npc"), 
+                               y = unit(.7, "npc"))), 
+                   arrangeGrob(p21, top = textGrob("Case Fatality Ratio (CFR)", x = unit(0.5, "npc"), 
+                               y = unit(.7, "npc"))), 
+                   arrangeGrob(p34, top =textGrob("Relative Start Delay", x = unit(0.5, "npc"), 
+                               y = unit(0.7, "npc"))),
+                   arrangeGrob(p25, top=textGrob("Initial Growth Period", x = unit(0.5, "npc"), 
+                               y = unit(.7, "npc"))),
+                   layout_matrix = lay))
+```
+
+## B-H correction (best fitting models)
+
+```{r}
+pvalues_best<-c(p_best_cfr, p_best_attackrate, p_best_monthlyattackrate, p_best_startdelay, p_best_daystofirst50)
+pvalues_best
+
+pvalues_best_BH<-p.adjust(pvalues_best, method="BH")
+pvalues_best_BH
+
+pvalues_best_list<-as.data.frame(pvalues_best)
+pvalues_best_list
+
+names(pvalues_best_list)<-c("pvalues_best")
+names(pvalues_best_list)
+
+pvalues_best_list$pvalues_best_BH<-pvalues_best_BH
+pvalues_best_list$pvalues_best_BH
+pvalues_best_list
+
+write.csv(pvalues_best_list,"pvalues_best_corrected.csv")
+
+```
+
+
+# 4. Pairwise correlations between the outcome variables
+
+```{r} 
+
+df_scores <- as.data.frame(res_pca$ind$coord)
+df_scores$'Cumulative Attack Rate' = log10(df$cases_per_million)
+df_scores$'Maximum Attack Rate' = log10(df$max_monthly_attackrate)
+df_scores$CFR = asin(sqrt(df$CFR))
+hist(df_scores$CFR)
+df_scores$'Relative Start Delay' = sqrt(df$start_delay) 
+hist(df_scores$'Relative Start Delay')
+df_scores$'Initial Growth Period' = log10(df$days_to_50cases) 
+hist(df_scores$'Initial Growth Period')
+df_scores$country = df$country
+
+ggpairs(df_scores[, c(5:9)], dpi=300)  
+```
+
+
