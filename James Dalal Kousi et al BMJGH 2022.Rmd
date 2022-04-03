@@ -33,7 +33,7 @@ library(pheatmap)
 
 ```{r}
 
-df <- read.csv("./46country_whoafro_datafile.csv", 
+df <- read.csv("./data.csv", 
                header = TRUE, sep = ",", dec = ".") 
 
 df = df[-(which(df$country=="United Republic of Tanzania")), ]  # removing due to poor data quality
@@ -509,7 +509,7 @@ print(grid.arrange(arrangeGrob(p22, top =textGrob("Cumulative Attack Rate", x = 
                    layout_matrix = lay))
 ```
 
-## B-H correction (best fitting models)
+## B-H correction 
 
 ```{r}
 pvalues_best<-c(p_best_cfr, p_best_attackrate, p_best_monthlyattackrate, p_best_startdelay, p_best_daystofirst50)
