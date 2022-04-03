@@ -3,7 +3,7 @@ The R Markdown (Rmd) file containing the script for statistical analyses describ
 
 The details of the analyses, the variables, etc. are explained in the original article. 
 
-In the datafile, SI in columns 5-7 denotes stringency index. The next two columns give the difference in stringency index. Stringency_Index_Peak indicates stringency index corresponding to the date when the daily incidence from a country was the highest during the period under consideration, which is the first wave. 
+In the datafile, SI in columns 5-7 denotes stringency index. The next two columns give the difference in stringency index. Stringency_Index_Peak indicates stringency index corresponding to the date when the daily incidence from a country was the highest during the period under consideration. 
 
 Other variable names are intuitive, and it should not be hard for someone who has familiarity with English language to understand the meaning of the symbols.
 
