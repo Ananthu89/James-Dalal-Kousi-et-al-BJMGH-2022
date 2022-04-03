@@ -1,6 +1,6 @@
 ---
 title: "Analyses for James et al. 2022: An in-depth statistical analysis of the COVID- 19 pandemic's initial spread in the WHO African region"
-date: "06/01/2022"
+date (last cleaned): "April 3, 2022"
 author: 'Ananthu James, Jyoti Dalal, Jessie Abbate'
 output: 
   html_document: 
