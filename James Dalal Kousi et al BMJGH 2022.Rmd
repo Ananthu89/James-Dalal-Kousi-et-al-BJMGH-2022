@@ -33,7 +33,7 @@ library(pheatmap)
 
 ```{r}
 
-df <- read.csv("./46country_whoafro_datafile.csv", 
+df <- read.csv("./data.csv", 
                header = TRUE, sep = ",", dec = ".") 
 
 df = df[-(which(df$country=="United Republic of Tanzania")), ]  # removing due to poor data quality
